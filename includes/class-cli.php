@@ -254,4 +254,8 @@ class CLI {
 	}
 }
 
-\WP_CLI::add_command( 'muf', __NAMESPACE__ . '\\CLI' );
+\WP_CLI::add_command( 'muf scan',      array( __NAMESPACE__ . '\\CLI', 'scan' ) );
+\WP_CLI::add_command( 'muf replace',   array( __NAMESPACE__ . '\\CLI', 'replace' ) );
+\WP_CLI::add_command( 'muf list-runs', array( __NAMESPACE__ . '\\CLI', 'list_runs' ) );
+\WP_CLI::add_command( 'muf rollback',  array( __NAMESPACE__ . '\\CLI', 'rollback' ) );
+\WP_CLI::add_command( 'muf discard',   array( __NAMESPACE__ . '\\CLI', 'discard' ) );
