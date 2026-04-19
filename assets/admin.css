@@ -1,0 +1,31 @@
+.muf-wrap .form-table input[type=url] { width: 420px; }
+.muf-log {
+	background: #1e1e1e;
+	color: #f0f0f0;
+	padding: 12px;
+	min-height: 80px;
+	max-height: 360px;
+	overflow: auto;
+	font-family: Menlo, Monaco, Consolas, monospace;
+	font-size: 12px;
+	border-radius: 4px;
+	white-space: pre-wrap;
+}
+#muf-scan-results table { margin-top: 8px; }
+#muf-progress {
+	margin: 8px 0;
+	font-weight: 600;
+}
+.muf-progress-bar {
+	background: #e0e0e0;
+	border-radius: 3px;
+	height: 8px;
+	overflow: hidden;
+	margin-top: 4px;
+}
+.muf-progress-bar-fill {
+	background: #2271b1;
+	height: 100%;
+	width: 0;
+	transition: width 200ms ease;
+}
