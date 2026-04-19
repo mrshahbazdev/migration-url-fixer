@@ -30,6 +30,7 @@ require_once MUF_PLUGIN_DIR . 'includes/class-backup.php';
 require_once MUF_PLUGIN_DIR . 'includes/class-scanner.php';
 require_once MUF_PLUGIN_DIR . 'includes/class-replacer.php';
 require_once MUF_PLUGIN_DIR . 'includes/class-admin.php';
+require_once MUF_PLUGIN_DIR . 'includes/class-network.php';
 require_once MUF_PLUGIN_DIR . 'includes/class-plugin.php';
 
 register_activation_hook( __FILE__, array( 'MUF\\Plugin', 'activate' ) );

@@ -3,10 +3,8 @@
  * Serialized-safe recursive string replace.
  *
  * Walks arrays, objects, JSON strings and PHP-serialized strings, replacing
- * a search string with a replacement without breaking serialized lengths.
- *
- * Adapted conceptually from interconnect/it's Search-Replace-DB (GPL-2.0),
- * rewritten here to keep the plugin self-contained.
+ * a search string (plain or regex) with a replacement without breaking
+ * serialized lengths.
  *
  * @package MigrationUrlFixer
  */
@@ -18,45 +16,57 @@ defined( 'ABSPATH' ) || exit;
 class Serialized {
 
 	/**
-	 * Recursively replace $from with $to inside $data, safely handling
-	 * serialized arrays/objects, JSON strings, and nested structures.
+	 * Recursively replace $from with $to inside $data.
 	 *
-	 * @param mixed  $data     Data (string, array, object, scalar).
-	 * @param string $from     Search string.
-	 * @param string $to       Replacement string.
+	 * Supported option flags:
+	 *   - bool 'regex'            Treat $from as a PCRE regex delimited by `#` (no delimiters required).
+	 *   - bool 'case_insensitive' Case-insensitive matching (plain mode only).
+	 *
+	 * @param mixed  $data       Data (string, array, object, scalar).
+	 * @param string $from       Search string.
+	 * @param string $to         Replacement string.
+	 * @param array  $opts       Options.
 	 * @param bool   $serialized Whether $data came from a serialize() call (internal).
 	 *
 	 * @return mixed Data with replacements applied.
 	 */
-	public static function replace( $data, $from, $to, $serialized = false ) {
+	public static function replace( $data, $from, $to, array $opts = array(), $serialized = false ) {
+		$opts = wp_parse_args(
+			$opts,
+			array(
+				'regex'            => false,
+				'case_insensitive' => false,
+			)
+		);
+
 		try {
 			if ( is_string( $data ) && '' !== $data ) {
 				$unserialized = @unserialize( $data, array( 'allowed_classes' => false ) ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 				if ( false !== $unserialized || 'b:0;' === $data ) {
-					$data = self::replace( $unserialized, $from, $to, true );
+					$data = self::replace( $unserialized, $from, $to, $opts, true );
 				} elseif ( self::is_json( $data ) ) {
 					$decoded = json_decode( $data, true );
 					if ( is_array( $decoded ) ) {
-						$decoded = self::replace( $decoded, $from, $to, false );
+						$decoded = self::replace( $decoded, $from, $to, $opts, false );
 						$data    = function_exists( 'wp_json_encode' )
 							? wp_json_encode( $decoded, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE )
 							: json_encode( $decoded, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
 					} else {
-						$data = self::string_replace( $data, $from, $to );
+						$data = self::string_replace( $data, $from, $to, $opts );
 					}
 				} else {
-					$data = self::string_replace( $data, $from, $to );
+					$data = self::string_replace( $data, $from, $to, $opts );
 				}
 			} elseif ( is_array( $data ) ) {
 				$new = array();
 				foreach ( $data as $key => $value ) {
-					$new[ $key ] = self::replace( $value, $from, $to, false );
+					$new[ $key ] = self::replace( $value, $from, $to, $opts, false );
 				}
 				$data = $new;
 			} elseif ( is_object( $data ) && ! ( $data instanceof \__PHP_Incomplete_Class ) ) {
 				$props = get_object_vars( $data );
 				foreach ( $props as $key => $value ) {
-					$data->{$key} = self::replace( $value, $from, $to, false );
+					$data->{$key} = self::replace( $value, $from, $to, $opts, false );
 				}
 			}
 
@@ -64,7 +74,6 @@ class Serialized {
 				return serialize( $data ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.serialize_serialize
 			}
 		} catch ( \Throwable $e ) {
-			// Fail safe: if anything odd happens, return the original value untouched.
 			return $data;
 		}
 
@@ -72,34 +81,88 @@ class Serialized {
 	}
 
 	/**
-	 * Plain string replace that also handles URL-encoded and scheme-agnostic variants.
+	 * String replace helper. Handles regex, case-insensitive, URL-encoded and
+	 * slash-escaped variants.
 	 *
 	 * @param string $haystack Source string.
-	 * @param string $from     Original URL/string.
+	 * @param string $from     Needle (or regex pattern).
 	 * @param string $to       Replacement.
+	 * @param array  $opts     Options.
 	 * @return string
 	 */
-	public static function string_replace( $haystack, $from, $to ) {
+	public static function string_replace( $haystack, $from, $to, array $opts = array() ) {
 		if ( '' === $haystack ) {
 			return $haystack;
 		}
+		$regex   = ! empty( $opts['regex'] );
+		$case_i  = ! empty( $opts['case_insensitive'] );
 
-		$haystack = str_replace( $from, $to, $haystack );
+		if ( $regex ) {
+			$pattern  = self::prepare_regex( $from, $case_i );
+			$replaced = @preg_replace( $pattern, $to, $haystack ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+			return null === $replaced ? $haystack : $replaced;
+		}
+
+		if ( $case_i ) {
+			$haystack = str_ireplace( $from, $to, $haystack );
+		} else {
+			$haystack = str_replace( $from, $to, $haystack );
+		}
 
 		$from_enc = rawurlencode( $from );
 		$to_enc   = rawurlencode( $to );
 		if ( $from_enc !== $from ) {
-			$haystack = str_replace( $from_enc, $to_enc, $haystack );
+			$haystack = $case_i
+				? str_ireplace( $from_enc, $to_enc, $haystack )
+				: str_replace( $from_enc, $to_enc, $haystack );
 		}
 
-		// JSON-escaped slashes variant (common in Elementor / block attrs).
 		$from_slashed = addcslashes( $from, '/' );
 		$to_slashed   = addcslashes( $to, '/' );
 		if ( $from_slashed !== $from ) {
-			$haystack = str_replace( $from_slashed, $to_slashed, $haystack );
+			$haystack = $case_i
+				? str_ireplace( $from_slashed, $to_slashed, $haystack )
+				: str_replace( $from_slashed, $to_slashed, $haystack );
 		}
 
 		return $haystack;
+	}
+
+	/**
+	 * Count how many times $from appears inside $data (recursive).
+	 *
+	 * @param mixed  $data Data.
+	 * @param string $from Needle or pattern.
+	 * @param array  $opts Options.
+	 * @return int
+	 */
+	public static function count( $data, $from, array $opts = array() ) {
+		$count   = 0;
+		$regex   = ! empty( $opts['regex'] );
+		$case_i  = ! empty( $opts['case_insensitive'] );
+
+		if ( is_string( $data ) ) {
+			if ( $regex ) {
+				$pattern = self::prepare_regex( $from, $case_i );
+				$n       = @preg_match_all( $pattern, $data ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+				$count  += $n ? $n : 0;
+			} else {
+				$count += $case_i ? substr_count( strtolower( $data ), strtolower( $from ) ) : substr_count( $data, $from );
+				$from_enc = rawurlencode( $from );
+				if ( $from_enc !== $from ) {
+					$count += $case_i ? substr_count( strtolower( $data ), strtolower( $from_enc ) ) : substr_count( $data, $from_enc );
+				}
+			}
+		} elseif ( is_array( $data ) ) {
+			foreach ( $data as $value ) {
+				$count += self::count( $value, $from, $opts );
+			}
+		} elseif ( is_object( $data ) && ! ( $data instanceof \__PHP_Incomplete_Class ) ) {
+			foreach ( get_object_vars( $data ) as $value ) {
+				$count += self::count( $value, $from, $opts );
+			}
+		}
+		return $count;
 	}
 
 	/**
@@ -122,29 +185,27 @@ class Serialized {
 	}
 
 	/**
-	 * Count how many times $from appears inside $data (recursive).
+	 * Wrap a user-supplied regex with `#` delimiters if missing, add `i` flag when requested.
 	 *
-	 * @param mixed  $data Data.
-	 * @param string $from Needle.
-	 * @return int
+	 * @param string $pattern Pattern.
+	 * @param bool   $case_i  Case-insensitive.
+	 * @return string
 	 */
-	public static function count( $data, $from ) {
-		$count = 0;
-		if ( is_string( $data ) ) {
-			$count += substr_count( $data, $from );
-			$from_enc = rawurlencode( $from );
-			if ( $from_enc !== $from ) {
-				$count += substr_count( $data, $from_enc );
-			}
-		} elseif ( is_array( $data ) ) {
-			foreach ( $data as $value ) {
-				$count += self::count( $value, $from );
-			}
-		} elseif ( is_object( $data ) && ! ( $data instanceof \__PHP_Incomplete_Class ) ) {
-			foreach ( get_object_vars( $data ) as $value ) {
-				$count += self::count( $value, $from );
+	private static function prepare_regex( $pattern, $case_i ) {
+		$first = $pattern[0] ?? '';
+		$has_delim = false;
+		if ( $first && in_array( $first, array( '#', '/', '~', '@' ), true ) ) {
+			$last_delim = strrpos( $pattern, $first );
+			if ( false !== $last_delim && $last_delim > 0 ) {
+				$has_delim = true;
 			}
 		}
-		return $count;
+		if ( ! $has_delim ) {
+			$pattern = '#' . str_replace( '#', '\\#', $pattern ) . '#';
+		}
+		if ( $case_i && false === strpos( substr( $pattern, strrpos( $pattern, substr( $pattern, 0, 1 ) ) + 1 ), 'i' ) ) {
+			$pattern .= 'i';
+		}
+		return $pattern;
 	}
 }
