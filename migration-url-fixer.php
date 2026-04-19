@@ -3,7 +3,7 @@
  * Plugin Name:       Migration URL Fixer
  * Plugin URI:        https://github.com/mrshahbazdev/migration-url-fixer
  * Description:       Fix broken URLs and media paths after a WordPress migration. Gutenberg-block aware, serialized-safe, with dry-run preview, automatic backup, and one-click rollback.
- * Version:           0.1.0
+ * Version:           0.2.0
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            Muhammad Shahbaz
@@ -18,7 +18,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'MUF_VERSION', '0.1.0' );
+define( 'MUF_VERSION', '0.2.0' );
 define( 'MUF_PLUGIN_FILE', __FILE__ );
 define( 'MUF_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'MUF_PLUGIN_URL', plugin_dir_url( __FILE__ ) );

@@ -6,3 +6,6 @@ vendor/
 .idea/
 .vscode/
 *.zip
+.phpunit.result.cache
+.phpunit.cache/
+composer.lock

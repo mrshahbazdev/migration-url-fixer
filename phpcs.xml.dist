@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<ruleset name="MigrationUrlFixer">
+	<description>Coding standards for Migration URL Fixer.</description>
+
+	<file>./migration-url-fixer.php</file>
+	<file>./uninstall.php</file>
+	<file>./includes</file>
+	<file>./admin</file>
+
+	<exclude-pattern>*/node_modules/*</exclude-pattern>
+	<exclude-pattern>*/vendor/*</exclude-pattern>
+	<exclude-pattern>*/tests/*</exclude-pattern>
+
+	<arg name="extensions" value="php"/>
+	<arg value="ps"/>
+	<arg name="colors"/>
+
+	<config name="testVersion" value="7.4-"/>
+	<config name="minimum_supported_wp_version" value="5.8"/>
+
+	<rule ref="WordPress">
+		<exclude name="WordPress.Files.FileName.InvalidClassFileName"/>
+		<exclude name="WordPress.Files.FileName.NotHyphenatedLowercase"/>
+		<exclude name="Generic.Commenting.DocComment.MissingShort"/>
+		<exclude name="Squiz.Commenting.FileComment"/>
+		<exclude name="Squiz.Commenting.ClassComment"/>
+		<exclude name="Squiz.Commenting.FunctionComment"/>
+		<exclude name="Squiz.Commenting.VariableComment"/>
+		<exclude name="WordPress.WP.I18n.MissingTranslatorsComment"/>
+		<exclude name="WordPress.DB.DirectDatabaseQuery"/>
+		<exclude name="WordPress.DB.SlowDBQuery"/>
+	</rule>
+
+	<rule ref="WordPress.WP.I18n">
+		<properties>
+			<property name="text_domain" type="array" value="migration-url-fixer"/>
+		</properties>
+	</rule>
+
+	<rule ref="PHPCompatibilityWP"/>
+</ruleset>
