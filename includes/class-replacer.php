@@ -2,11 +2,6 @@
 /**
  * Batched URL replacer.
  *
- * Iterates rows in chunks, applies serialized-safe replacement (plus
- * Gutenberg-aware handling for post_content), and updates changed rows.
- * Designed to be driven by an AJAX loop from the admin UI so large sites
- * don't time out.
- *
  * @package MigrationUrlFixer
  */
 
@@ -16,31 +11,28 @@ defined( 'ABSPATH' ) || exit;
 
 class Replacer {
 
-	/** Default batch size per AJAX tick. */
+	/** Default batch size per AJAX / CLI tick. */
 	const BATCH_SIZE = 200;
 
 	/**
 	 * Process one batch.
 	 *
-	 * @param string $from      Old URL.
-	 * @param string $to        New URL.
-	 * @param string $area      Area key from Scanner::area_map().
-	 * @param int    $offset    Current offset.
-	 * @param string $run_id    Current run ID (for backups).
-	 * @param bool   $dry_run   If true, no writes.
-	 * @return array {
-	 *   @type int  processed Rows inspected this batch.
-	 *   @type int  changed   Rows actually updated.
-	 *   @type int  next      Next offset, or -1 if done.
-	 *   @type int  total     Total rows in area.
-	 * }
+	 * @param string $from    Old URL/pattern.
+	 * @param string $to      New URL.
+	 * @param string $area    Area key.
+	 * @param int    $offset  Current offset.
+	 * @param string $run_id  Run ID for backups.
+	 * @param bool   $dry_run If true, no writes.
+	 * @param array  $opts    Options (regex, case_insensitive, exclude_post_types, exclude_options, allow_critical).
+	 *
+	 * @return array {processed, changed, next (-1 when done), total, run_id}
 	 */
-	public static function process_batch( $from, $to, $area, $offset, $run_id, $dry_run = false ) {
+	public static function process_batch( $from, $to, $area, $offset, $run_id, $dry_run = false, array $opts = array() ) {
 		global $wpdb;
 
 		$map = Scanner::area_map();
 		if ( empty( $map[ $area ] ) ) {
-			return array( 'processed' => 0, 'changed' => 0, 'next' => -1, 'total' => 0 );
+			return array( 'processed' => 0, 'changed' => 0, 'next' => -1, 'total' => 0, 'run_id' => $run_id );
 		}
 		$cfg     = $map[ $area ];
 		$table   = $cfg['table'];
@@ -52,11 +44,13 @@ class Replacer {
 			Backup::snapshot_table( $run_id, $table );
 		}
 
+		$where = Scanner::build_where( $area, $opts );
+
 		// phpcs:disable WordPress.DB.PreparedSQL
-		$total = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$table}`" );
+		$total = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$table}` WHERE 1=1{$where}" );
 		$rows  = $wpdb->get_results(
 			$wpdb->prepare(
-				"SELECT * FROM `{$table}` ORDER BY `{$id_col}` ASC LIMIT %d OFFSET %d",
+				"SELECT * FROM `{$table}` WHERE 1=1{$where} ORDER BY `{$id_col}` ASC LIMIT %d OFFSET %d",
 				self::BATCH_SIZE,
 				$offset
 			)
@@ -76,9 +70,9 @@ class Replacer {
 				}
 
 				if ( in_array( $col, $blocks, true ) ) {
-					$new = Blocks::replace( $original, $from, $to );
+					$new = Blocks::replace( $original, $from, $to, $opts );
 				} else {
-					$new = Serialized::replace( $original, $from, $to, false );
+					$new = Serialized::replace( $original, $from, $to, $opts, false );
 				}
 
 				if ( $new !== $original ) {
@@ -89,11 +83,7 @@ class Replacer {
 			if ( ! empty( $updates ) ) {
 				$changed++;
 				if ( ! $dry_run ) {
-					$wpdb->update(
-						$table,
-						$updates,
-						array( $id_col => $row->$id_col )
-					);
+					$wpdb->update( $table, $updates, array( $id_col => $row->$id_col ) );
 				}
 			}
 		}
@@ -105,6 +95,45 @@ class Replacer {
 			'changed'   => $changed,
 			'next'      => $next,
 			'total'     => $total,
+			'run_id'    => $run_id,
 		);
+	}
+
+	/**
+	 * Run the full replacement synchronously for every area. Used by WP-CLI.
+	 *
+	 * @param string   $from    Needle.
+	 * @param string   $to      Replacement.
+	 * @param array    $areas   Areas to process.
+	 * @param bool     $dry_run Dry-run.
+	 * @param array    $opts    Options.
+	 * @param callable $log     Optional logger callback( string $line ).
+	 * @return array Per-area totals.
+	 */
+	public static function run_all( $from, $to, array $areas, $dry_run, array $opts, $log = null ) {
+		$run_id = Backup::new_run_id();
+		$totals = array();
+
+		foreach ( $areas as $area ) {
+			$offset  = 0;
+			$changed = 0;
+			$rows    = 0;
+			do {
+				$res     = self::process_batch( $from, $to, $area, $offset, $run_id, $dry_run, $opts );
+				$changed += $res['changed'];
+				$rows    += $res['processed'];
+				if ( is_callable( $log ) ) {
+					call_user_func( $log, sprintf( '%s: offset=%d processed=%d changed=%d total=%d', $area, $offset, $res['processed'], $res['changed'], $res['total'] ) );
+				}
+				$offset = $res['next'];
+			} while ( -1 !== $offset );
+
+			$totals[ $area ] = array(
+				'rows'    => $rows,
+				'changed' => $changed,
+			);
+		}
+		$totals['_run_id'] = $run_id;
+		return $totals;
 	}
 }

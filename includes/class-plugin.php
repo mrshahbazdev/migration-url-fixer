@@ -11,20 +11,19 @@ defined( 'ABSPATH' ) || exit;
 
 class Plugin {
 
-	/**
-	 * Boot the plugin.
-	 */
 	public static function boot() {
 		load_plugin_textdomain( 'migration-url-fixer', false, dirname( plugin_basename( MUF_PLUGIN_FILE ) ) . '/languages' );
 
-		if ( is_admin() ) {
+		if ( is_admin() || ( function_exists( 'is_network_admin' ) && is_network_admin() ) ) {
 			Admin::instance()->hooks();
+			Network::hooks();
+		}
+
+		if ( defined( 'WP_CLI' ) && WP_CLI ) {
+			require_once MUF_PLUGIN_DIR . 'includes/class-cli.php';
 		}
 	}
 
-	/**
-	 * Activation.
-	 */
 	public static function activate() {
 		if ( ! current_user_can( 'activate_plugins' ) ) {
 			return;
@@ -35,10 +34,7 @@ class Plugin {
 		}
 	}
 
-	/**
-	 * Deactivation.
-	 */
 	public static function deactivate() {
-		// Intentionally left blank. We keep backup tables so users can still roll back.
+		// Intentionally left blank; backup tables are preserved so users can still roll back.
 	}
 }

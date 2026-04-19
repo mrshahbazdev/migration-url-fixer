@@ -14,70 +14,130 @@ class Scanner {
 	/**
 	 * Scan all configured areas and return a per-area count.
 	 *
-	 * @param string $from Old URL.
-	 * @param array  $areas Areas to include. Supported keys:
-	 *                      'posts', 'postmeta', 'options', 'usermeta', 'comments', 'commentmeta', 'termmeta'.
-	 * @return array Associative array of area => count.
+	 * @param string $from  Old URL / pattern.
+	 * @param array  $areas Areas to include.
+	 * @param array  $opts  Shared options (regex, case_insensitive, exclude_post_types, exclude_options).
+	 * @return array area => approximate count.
 	 */
-	public static function scan( $from, array $areas ) {
+	public static function scan( $from, array $areas, array $opts = array() ) {
 		global $wpdb;
 		$result = array();
+		$map    = self::area_map();
 
-		if ( in_array( 'posts', $areas, true ) ) {
-			$result['posts'] = self::count_column( $wpdb->posts, array( 'post_content', 'post_excerpt', 'post_title', 'guid' ), $from );
-		}
-		if ( in_array( 'postmeta', $areas, true ) ) {
-			$result['postmeta'] = self::count_column( $wpdb->postmeta, array( 'meta_value' ), $from );
-		}
-		if ( in_array( 'options', $areas, true ) ) {
-			$result['options'] = self::count_column( $wpdb->options, array( 'option_value' ), $from );
-		}
-		if ( in_array( 'usermeta', $areas, true ) ) {
-			$result['usermeta'] = self::count_column( $wpdb->usermeta, array( 'meta_value' ), $from );
-		}
-		if ( in_array( 'comments', $areas, true ) ) {
-			$result['comments'] = self::count_column( $wpdb->comments, array( 'comment_content', 'comment_author_url' ), $from );
-		}
-		if ( in_array( 'commentmeta', $areas, true ) ) {
-			$result['commentmeta'] = self::count_column( $wpdb->commentmeta, array( 'meta_value' ), $from );
-		}
-		if ( in_array( 'termmeta', $areas, true ) ) {
-			$result['termmeta'] = self::count_column( $wpdb->termmeta, array( 'meta_value' ), $from );
+		foreach ( $areas as $area ) {
+			if ( empty( $map[ $area ] ) ) {
+				continue;
+			}
+			$cfg              = $map[ $area ];
+			$result[ $area ]  = self::count_column( $cfg['table'], $cfg['columns'], $from, $opts, self::build_where( $area, $opts ) );
 		}
 
 		return $result;
 	}
 
 	/**
+	 * Build a SQL WHERE clause fragment for exclusions.
+	 *
+	 * @param string $area Area key.
+	 * @param array  $opts Options.
+	 * @return string Leading " AND ..." fragment, or empty string.
+	 */
+	public static function build_where( $area, array $opts ) {
+		global $wpdb;
+
+		$clauses = array();
+
+		if ( 'posts' === $area && ! empty( $opts['exclude_post_types'] ) ) {
+			$types = array_map( 'sanitize_key', (array) $opts['exclude_post_types'] );
+			if ( $types ) {
+				$placeholders = implode( ',', array_fill( 0, count( $types ), '%s' ) );
+				// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+				$clauses[] = $wpdb->prepare( "post_type NOT IN ($placeholders)", $types );
+			}
+		}
+		if ( 'postmeta' === $area && ! empty( $opts['exclude_post_types'] ) ) {
+			$types = array_map( 'sanitize_key', (array) $opts['exclude_post_types'] );
+			if ( $types ) {
+				$placeholders = implode( ',', array_fill( 0, count( $types ), '%s' ) );
+				// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+				$clauses[]    = $wpdb->prepare(
+					"post_id NOT IN ( SELECT ID FROM {$wpdb->posts} WHERE post_type IN ($placeholders) )",
+					$types
+				);
+			}
+		}
+		if ( 'options' === $area ) {
+			$excludes = array_merge(
+				self::critical_options_if_protected( $opts ),
+				array_map( 'sanitize_text_field', (array) ( $opts['exclude_options'] ?? array() ) )
+			);
+			foreach ( $excludes as $pattern ) {
+				if ( '' === $pattern ) {
+					continue;
+				}
+				$like = self::glob_to_like( $pattern );
+				// phpcs:ignore WordPress.DB.PreparedSQL
+				$clauses[] = $wpdb->prepare( 'option_name NOT LIKE %s', $like );
+			}
+		}
+
+		return $clauses ? ' AND ' . implode( ' AND ', $clauses ) : '';
+	}
+
+	/**
+	 * Critical options protected by default unless allow_critical=true.
+	 *
+	 * @param array $opts Options.
+	 * @return array
+	 */
+	public static function critical_options_if_protected( array $opts ) {
+		if ( ! empty( $opts['allow_critical'] ) ) {
+			return array();
+		}
+		return array( 'siteurl', 'home', 'template', 'stylesheet', 'active_plugins', 'upload_path', 'upload_url_path' );
+	}
+
+	/**
 	 * Count occurrences of $from across specified text columns of a table.
 	 *
-	 * Uses LIKE for a fast approximation. Exact serialized/JSON counts happen
-	 * during the actual replace phase.
-	 *
-	 * @param string $table   Table name.
-	 * @param array  $columns Columns to scan.
-	 * @param string $from    Needle.
-	 * @return int
+	 * For plain mode this is a LIKE-based approximation. For regex/case-insensitive
+	 * the count may be slightly inflated since we still scan using LIKE, then the
+	 * replacer phase is authoritative.
 	 */
-	private static function count_column( $table, array $columns, $from ) {
+	private static function count_column( $table, array $columns, $from, array $opts, $extra_where = '' ) {
 		global $wpdb;
 		$total = 0;
-		$like  = '%' . $wpdb->esc_like( $from ) . '%';
-		foreach ( $columns as $col ) {
+
+		if ( ! empty( $opts['regex'] ) ) {
+			// Regex mode: count total rows as an upper bound.
 			// phpcs:ignore WordPress.DB.PreparedSQL
-			$count = (int) $wpdb->get_var(
-				$wpdb->prepare(
-					"SELECT COUNT(*) FROM `{$table}` WHERE `{$col}` LIKE %s", // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders
-					$like
-				)
-			);
-			$total += $count;
+			$count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$table}` WHERE 1=1{$extra_where}" );
+			return $count;
+		}
+
+		$like = '%' . $wpdb->esc_like( $from ) . '%';
+		foreach ( $columns as $col ) {
+			$sql = "SELECT COUNT(*) FROM `{$table}` WHERE `{$col}` LIKE %s{$extra_where}";
+			// phpcs:ignore WordPress.DB.PreparedSQL
+			$total += (int) $wpdb->get_var( $wpdb->prepare( $sql, $like ) );
 		}
 		return $total;
 	}
 
 	/**
-	 * Return mapping of area -> (table, id_column, columns).
+	 * Convert a simple glob (* wildcard) to a SQL LIKE pattern.
+	 *
+	 * @param string $glob Glob string.
+	 * @return string
+	 */
+	public static function glob_to_like( $glob ) {
+		global $wpdb;
+		$escaped = $wpdb->esc_like( $glob );
+		return str_replace( array( '\\*', '\\?' ), array( '%', '_' ), $escaped );
+	}
+
+	/**
+	 * Return mapping of area -> (table, id_column, columns, blocks).
 	 *
 	 * @return array
 	 */

@@ -80,13 +80,14 @@ class Admin {
 	 */
 	public function ajax_scan() {
 		$this->verify();
-		$from  = isset( $_POST['from'] ) ? esc_url_raw( wp_unslash( $_POST['from'] ) ) : '';
+		$from  = $this->get_from_param();
 		$areas = $this->sanitize_areas( $_POST['areas'] ?? array() );
+		$opts  = $this->opts_from_request();
 
 		if ( '' === $from ) {
 			wp_send_json_error( array( 'message' => __( 'Old URL is required.', 'migration-url-fixer' ) ) );
 		}
-		wp_send_json_success( array( 'counts' => Scanner::scan( $from, $areas ) ) );
+		wp_send_json_success( array( 'counts' => Scanner::scan( $from, $areas, $opts ) ) );
 	}
 
 	/**
@@ -95,12 +96,15 @@ class Admin {
 	public function ajax_batch() {
 		$this->verify();
 
-		$from    = isset( $_POST['from'] ) ? esc_url_raw( wp_unslash( $_POST['from'] ) ) : '';
-		$to      = isset( $_POST['to'] ) ? esc_url_raw( wp_unslash( $_POST['to'] ) ) : '';
+		$from    = $this->get_from_param();
+		$to      = isset( $_POST['to'] ) ? wp_unslash( $_POST['to'] ) : '';
 		$area    = isset( $_POST['area'] ) ? sanitize_key( wp_unslash( $_POST['area'] ) ) : '';
 		$offset  = isset( $_POST['offset'] ) ? absint( $_POST['offset'] ) : 0;
 		$run_id  = isset( $_POST['run_id'] ) ? sanitize_key( wp_unslash( $_POST['run_id'] ) ) : Backup::new_run_id();
 		$dry_run = ! empty( $_POST['dry_run'] );
+		$opts    = $this->opts_from_request();
+
+		$to = sanitize_text_field( $to );
 
 		if ( '' === $from || '' === $to ) {
 			wp_send_json_error( array( 'message' => __( 'Both URLs are required.', 'migration-url-fixer' ) ) );
@@ -109,14 +113,10 @@ class Admin {
 			wp_send_json_error( array( 'message' => __( 'Old and new URLs are identical.', 'migration-url-fixer' ) ) );
 		}
 
-		$result           = Replacer::process_batch( $from, $to, $area, $offset, $run_id, $dry_run );
-		$result['run_id'] = $run_id;
+		$result = Replacer::process_batch( $from, $to, $area, $offset, $run_id, $dry_run, $opts );
 		wp_send_json_success( $result );
 	}
 
-	/**
-	 * AJAX: rollback a run.
-	 */
 	public function ajax_rollback() {
 		$this->verify();
 		$run_id = isset( $_POST['run_id'] ) ? sanitize_key( wp_unslash( $_POST['run_id'] ) ) : '';
@@ -127,9 +127,6 @@ class Admin {
 		wp_send_json_success( array( 'restored' => $log ) );
 	}
 
-	/**
-	 * AJAX: discard a backup.
-	 */
 	public function ajax_discard() {
 		$this->verify();
 		$run_id = isset( $_POST['run_id'] ) ? sanitize_key( wp_unslash( $_POST['run_id'] ) ) : '';
@@ -141,11 +138,33 @@ class Admin {
 	}
 
 	/**
-	 * Sanitize the requested areas list against the known area map.
-	 *
-	 * @param mixed $raw Raw input.
-	 * @return array
+	 * When regex mode is active the "from" field is a PCRE pattern and should not
+	 * be coerced with esc_url_raw(). Otherwise sanitize as URL.
 	 */
+	private function get_from_param() {
+		if ( ! isset( $_POST['from'] ) ) {
+			return '';
+		}
+		$raw   = wp_unslash( $_POST['from'] );
+		$regex = ! empty( $_POST['regex'] );
+		return $regex ? sanitize_text_field( $raw ) : esc_url_raw( $raw );
+	}
+
+	private function opts_from_request() {
+		$excl_types   = isset( $_POST['exclude_post_types'] ) ? wp_unslash( $_POST['exclude_post_types'] ) : '';
+		$excl_options = isset( $_POST['exclude_options'] ) ? wp_unslash( $_POST['exclude_options'] ) : '';
+		$excl_types   = is_array( $excl_types ) ? $excl_types : array_filter( array_map( 'trim', explode( ',', (string) $excl_types ) ) );
+		$excl_options = is_array( $excl_options ) ? $excl_options : array_filter( array_map( 'trim', explode( ',', (string) $excl_options ) ) );
+
+		return array(
+			'regex'              => ! empty( $_POST['regex'] ),
+			'case_insensitive'   => ! empty( $_POST['case_insensitive'] ),
+			'exclude_post_types' => array_map( 'sanitize_key', $excl_types ),
+			'exclude_options'    => array_map( 'sanitize_text_field', $excl_options ),
+			'allow_critical'     => ! empty( $_POST['allow_critical'] ),
+		);
+	}
+
 	private function sanitize_areas( $raw ) {
 		$map   = array_keys( Scanner::area_map() );
 		$raw   = is_array( $raw ) ? array_map( 'sanitize_key', wp_unslash( $raw ) ) : array();
@@ -153,9 +172,6 @@ class Admin {
 		return $clean ?: $map;
 	}
 
-	/**
-	 * Verify capability + nonce for AJAX endpoints.
-	 */
 	private function verify() {
 		if ( ! current_user_can( self::CAP ) ) {
 			wp_send_json_error( array( 'message' => __( 'Insufficient permissions.', 'migration-url-fixer' ) ), 403 );

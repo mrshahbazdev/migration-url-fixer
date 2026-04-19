@@ -17,6 +17,19 @@
 			.get();
 	}
 
+	function getBaseParams() {
+		return {
+			from: $( '#muf-from' ).val(),
+			to: $( '#muf-to' ).val(),
+			regex: $( '#muf-regex' ).is( ':checked' ) ? 1 : 0,
+			case_insensitive: $( '#muf-case-i' ).is( ':checked' ) ? 1 : 0,
+			exclude_post_types: $( '#muf-excl-types' ).val(),
+			exclude_options: $( '#muf-excl-options' ).val(),
+			allow_critical: $( '#muf-allow-critical' ).is( ':checked' ) ? 1 : 0,
+			areas: getAreas(),
+		};
+	}
+
 	function log( line ) {
 		var $log = $( '#muf-log' );
 		$log.text( $log.text() + line + '\n' );
@@ -45,7 +58,13 @@
 	}
 
 	function setProgress( area, result ) {
-		var pct = result.total ? Math.round( ( ( result.next === -1 ? result.total : result.next ) / result.total ) * 100 ) : 100;
+		var pct = result.total
+			? Math.round(
+				( ( result.next === -1 ? result.total : result.next ) /
+					result.total ) *
+					100
+			)
+			: 100;
 		$( '#muf-progress' ).html(
 			'<div>' +
 				area +
@@ -64,15 +83,14 @@
 	$( '#muf-scan' ).on( 'click', function ( e ) {
 		e.preventDefault();
 		$( '#muf-scan-results' ).html( MUF.i18n.scanning );
-		post( 'muf_scan', {
-			from: $( '#muf-from' ).val(),
-			areas: getAreas(),
-		} )
+		post( 'muf_scan', getBaseParams() )
 			.done( function ( res ) {
 				if ( res && res.success ) {
 					renderCounts( res.data.counts );
 				} else {
-					$( '#muf-scan-results' ).text( ( res && res.data && res.data.message ) || 'Error' );
+					$( '#muf-scan-results' ).text(
+						( res && res.data && res.data.message ) || 'Error'
+					);
 				}
 			} )
 			.fail( function () {
@@ -80,7 +98,7 @@
 			} );
 	} );
 
-	function runArea( from, to, areas, idx, runId ) {
+	function runArea( base, areas, idx, runId ) {
 		if ( idx >= areas.length ) {
 			log( MUF.i18n.done );
 			return;
@@ -89,16 +107,19 @@
 		log( '--- ' + area + ' ---' );
 
 		function tick( offset ) {
-			post( 'muf_batch', {
-				from: from,
-				to: to,
-				area: area,
-				offset: offset,
-				run_id: runId,
-			} )
+			post(
+				'muf_batch',
+				$.extend( {}, base, {
+					area: area,
+					offset: offset,
+					run_id: runId,
+				} )
+			)
 				.done( function ( res ) {
 					if ( ! res || ! res.success ) {
-						log( 'Error: ' + ( res && res.data && res.data.message ) );
+						log(
+							'Error: ' + ( res && res.data && res.data.message )
+						);
 						return;
 					}
 					runId = res.data.run_id || runId;
@@ -112,7 +133,7 @@
 							res.data.next
 					);
 					if ( res.data.next === -1 ) {
-						runArea( from, to, areas, idx + 1, runId );
+						runArea( base, areas, idx + 1, runId );
 					} else {
 						tick( res.data.next );
 					}
@@ -130,10 +151,9 @@
 			return;
 		}
 		$( '#muf-log' ).text( '' );
-		var from = $( '#muf-from' ).val();
-		var to = $( '#muf-to' ).val();
-		var areas = getAreas();
-		runArea( from, to, areas, 0, '' );
+		var base = getBaseParams();
+		var areas = base.areas;
+		runArea( base, areas, 0, '' );
 	} );
 
 	$( document ).on( 'click', '.muf-rollback', function ( e ) {

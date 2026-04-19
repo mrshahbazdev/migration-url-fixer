@@ -20,12 +20,21 @@ rsort( $muf_runs );
 	<h2 class="title"><?php esc_html_e( '1. Configure', 'migration-url-fixer' ); ?></h2>
 	<table class="form-table" role="presentation">
 		<tr>
-			<th scope="row"><label for="muf-from"><?php esc_html_e( 'Old URL', 'migration-url-fixer' ); ?></label></th>
-			<td><input type="url" id="muf-from" class="regular-text code" placeholder="https://old-site.com" /></td>
+			<th scope="row"><label for="muf-from"><?php esc_html_e( 'Old URL / Pattern', 'migration-url-fixer' ); ?></label></th>
+			<td><input type="text" id="muf-from" class="regular-text code" placeholder="https://old-site.com" /></td>
 		</tr>
 		<tr>
-			<th scope="row"><label for="muf-to"><?php esc_html_e( 'New URL', 'migration-url-fixer' ); ?></label></th>
-			<td><input type="url" id="muf-to" class="regular-text code" placeholder="<?php echo esc_attr( home_url() ); ?>" /></td>
+			<th scope="row"><label for="muf-to"><?php esc_html_e( 'New URL / Replacement', 'migration-url-fixer' ); ?></label></th>
+			<td><input type="text" id="muf-to" class="regular-text code" placeholder="<?php echo esc_attr( home_url() ); ?>" /></td>
+		</tr>
+		<tr>
+			<th scope="row"><?php esc_html_e( 'Matching mode', 'migration-url-fixer' ); ?></th>
+			<td>
+				<label><input type="checkbox" id="muf-regex" /> <?php esc_html_e( 'Regex (PCRE)', 'migration-url-fixer' ); ?></label>
+				&nbsp;&nbsp;
+				<label><input type="checkbox" id="muf-case-i" /> <?php esc_html_e( 'Case-insensitive', 'migration-url-fixer' ); ?></label>
+				<p class="description"><?php esc_html_e( 'In regex mode, the "Old URL" field is treated as a PCRE pattern. Replacement may use $1, $2 back-references.', 'migration-url-fixer' ); ?></p>
+			</td>
 		</tr>
 		<tr>
 			<th scope="row"><?php esc_html_e( 'Areas', 'migration-url-fixer' ); ?></th>
@@ -36,6 +45,27 @@ rsort( $muf_runs );
 						<code><?php echo esc_html( $area ); ?></code>
 					</label>
 				<?php endforeach; ?>
+			</td>
+		</tr>
+		<tr>
+			<th scope="row"><label for="muf-excl-types"><?php esc_html_e( 'Exclude post types', 'migration-url-fixer' ); ?></label></th>
+			<td>
+				<input type="text" id="muf-excl-types" class="regular-text code" placeholder="revision, nav_menu_item" />
+				<p class="description"><?php esc_html_e( 'Comma-separated. Applies to posts + postmeta areas.', 'migration-url-fixer' ); ?></p>
+			</td>
+		</tr>
+		<tr>
+			<th scope="row"><label for="muf-excl-options"><?php esc_html_e( 'Exclude option names', 'migration-url-fixer' ); ?></label></th>
+			<td>
+				<input type="text" id="muf-excl-options" class="regular-text code" placeholder="_transient_*, *_session_*" />
+				<p class="description"><?php esc_html_e( 'Comma-separated. Supports * wildcard.', 'migration-url-fixer' ); ?></p>
+			</td>
+		</tr>
+		<tr>
+			<th scope="row"><?php esc_html_e( 'Safety', 'migration-url-fixer' ); ?></th>
+			<td>
+				<label><input type="checkbox" id="muf-allow-critical" /> <?php esc_html_e( 'Allow modifying critical options', 'migration-url-fixer' ); ?></label>
+				<p class="description"><?php esc_html_e( 'By default siteurl, home, template, stylesheet, active_plugins, upload_path are protected. Only enable this if you know what you are doing.', 'migration-url-fixer' ); ?></p>
 			</td>
 		</tr>
 	</table>
@@ -78,4 +108,24 @@ rsort( $muf_runs );
 			</tbody>
 		</table>
 	<?php endif; ?>
+
+	<?php if ( is_multisite() ) : ?>
+		<p class="description">
+			<?php
+			echo wp_kses_post(
+				sprintf(
+					/* translators: %s: link to network admin page */
+					__( 'Multisite detected. Use the %s to run across every subsite.', 'migration-url-fixer' ),
+					'<a href="' . esc_url( network_admin_url( 'tools.php?page=migration-url-fixer-network' ) ) . '">network tools page</a>'
+				)
+			);
+			?>
+		</p>
+	<?php endif; ?>
+
+	<hr>
+	<p class="description">
+		<?php esc_html_e( 'Tip: prefer running large migrations via WP-CLI:', 'migration-url-fixer' ); ?>
+		<br><code>wp muf replace --from=https://old.com --to=https://new.com --dry-run</code>
+	</p>
 </div>
