@@ -133,7 +133,7 @@ class Scanner {
 	public static function glob_to_like( $glob ) {
 		global $wpdb;
 		$escaped = $wpdb->esc_like( $glob );
-		return str_replace( array( '\\*', '\\?' ), array( '%', '_' ), $escaped );
+		return str_replace( array( '*', '?' ), array( '%', '_' ), $escaped );
 	}
 
 	/**
